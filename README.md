@@ -19,3 +19,8 @@ cd docsend
 npm run build
 npm run start
 ```
+
+### Download Slides
+
+- set page.setViewport with ViewportForSlides params
+- call func downloadSlides

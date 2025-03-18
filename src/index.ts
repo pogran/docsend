@@ -1,16 +1,18 @@
 import dotenv from 'dotenv';
-import puppeteer, { Page } from 'puppeteer';
+import puppeteer from 'puppeteer';
 import fs from 'fs'
+import { defaultViewport, sleep } from './helpers';
+import path from 'path';
 
 dotenv.config();
 
 const start = async () => {
   const docUrl = 'https://docsend.com/view/aebf6cy35v5rfdfz'
-  const company = docUrl.split('/').pop()
+  const company = docUrl.split('/').pop() || ''
 
-  const downloadPath = `./downloads/${company}`;
+  const downloadPath = path.resolve(__dirname, '..', 'downloads', company);
   if (!fs.existsSync(downloadPath)) {
-    fs.mkdirSync(downloadPath);
+    fs.mkdirSync(downloadPath, { recursive: true });
   }
 
   const browser = await puppeteer.launch();
@@ -27,10 +29,20 @@ const start = async () => {
     "sec-ch-ua-platform-version": `10`,
   });
 
-  await page.setViewport({
-    width: 1900,
-    height: 800,
-  });
+  await page.setViewport(defaultViewport);
+
+  const client = await page.target().createCDPSession();
+  try {
+    await client.send('Page.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath
+    });
+    console.log(`Downloads will be saved to: ${downloadPath}`);
+  } catch (error) {
+    console.error('Failed to set download behavior:', error);
+    await page.close()
+    await browser.close()
+  }
 
   await page.goto(docUrl, { waitUntil: 'networkidle0' });
 
@@ -44,15 +56,13 @@ const start = async () => {
     await page.waitForNavigation();
   }
 
-  const countPages = await getCountPages(page)
-  if (!countPages)
-    throw new Error('Pages not found')
+  // Download pdf
+  await page.waitForSelector('.toolbar-button.js-document-download')
+  await page.click('.toolbar-button.js-document-download');
+  // wait 10 seconds while pdf is downloading
+  await sleep(10000)
 
-  await downloadSlide({ page, countPages, currentPage: 1, downloadPath })
-
-  await page.waitForSelector('.item.active')
-  const imgElement = await page.waitForSelector('.item.active img.page-view');
-  if (imgElement) await imgElement.screenshot({ path: 'screenshot-image.png' });
+  // await downloadSlides(page, downloadPath)
 
   await page.close()
   await browser.close()
@@ -60,34 +70,3 @@ const start = async () => {
 
 start()
 
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function getCountPages(page: Page) {
-  let pages = 0
-  const pagesBlock = await page.waitForSelector('.toolbar-page-indicator.space-inset-s')
-  if (pagesBlock) {
-    pages = +((await pagesBlock.evaluate(node => node.textContent?.split('/').pop()?.trim())) || '0')
-  }
-
-  return pages
-}
-
-
-async function downloadSlide(params: { page: Page, countPages: number, currentPage: number, downloadPath: string }) {
-  const { page, countPages, currentPage, downloadPath } = params
-
-  console.log(`parsing slide ${currentPage}`)
-
-  await page.waitForSelector('.item.active')
-  const imgElement = await page.waitForSelector('.item.active img.page-view');
-  if (imgElement) await imgElement.screenshot({ path: `${downloadPath}/${params.currentPage}.png` });
-
-  if (params.currentPage + 1 > countPages) return
-
-  await page.click('.right.carousel-control');
-  await sleep(1000)
-
-  return downloadSlide({ ...params, currentPage: currentPage + 1 })
-}
